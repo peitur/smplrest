@@ -1,0 +1,17 @@
+{application, smplrest, [
+    {description, "Simple REST application using erlang"},
+    {vsn, "0.0.1"},
+    {modules, [
+        smplrest_config,
+        smplrest_app,
+        sr_cwbmgr
+    ]},
+    {registered, []},
+    {applications, [
+        kernel,
+        stdlib,
+        cowboy
+    ]},
+    {mod, {smplrest_app, []}},
+    {env, []}
+]}.
