@@ -1,8 +1,12 @@
--module( 	sr_cwbmgr ).
+-module( sr_cwbmgr ).
 -behaviour( gen_server ).
 
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
+
+
+-define( CONFIG, smplrest_config ).
+-define( DEFAULT_PORT, 8080 ).
 
 %% ====================================================================
 %% API functions
@@ -26,7 +30,7 @@ stop( Reason ) ->
 %% ====================================================================
 %% Behavioural functions 
 %% ====================================================================
--record(state, {}).
+-record(state, { port, dispatch }).
 
 %% init/1
 %% ====================================================================
@@ -40,8 +44,12 @@ stop( Reason ) ->
 	State :: term(),
 	Timeout :: non_neg_integer() | infinity.
 %% ====================================================================
-init([]) ->
-    {ok, #state{}}.
+init( _ ) ->
+	erlang:process_flag( trap_exit, true ),
+	Port = ?CONFIG:get_value( rest, port ),
+	Dispatch = undefined,
+
+    {ok, #state{ port = Port, dispatch = Dispatch }, 1000 }.
 
 
 %% handle_call/3
@@ -94,6 +102,27 @@ handle_cast( _Msg, State) ->
 	NewState :: term(),
 	Timeout :: non_neg_integer() | infinity.
 %% ====================================================================
+handle_info( timeout, #state{ port = Port, dispatch = Disp } = State ) ->
+	case Disp of
+		undefined ->
+			io:format( "Starting service on port ~p ~n", [ Port ] ),
+			Dispatch = cowboy_router:compile([
+				{'_', [
+					{"/", sr_http_handler, []}
+				]}
+			]),
+			{ok, _} = cowboy:start_http(http, 100, [ { port, i_port_fix(Port) }], [
+				{env, [{dispatch, Dispatch}]}
+			]),
+			
+%			sr_http_handler_sup:start_link( [] )
+
+			{noreply, State#state{ dispatch = Dispatch } };
+
+		_Else ->
+			{noreply, State}
+	end;
+
 handle_info( _Info, State) ->
     {noreply, State}.
 
@@ -126,3 +155,7 @@ code_change( _OldVsn, State, _Extra) ->
 %% ====================================================================
 %% Internal functions
 %% ====================================================================
+
+i_port_fix( Port ) when is_integer( Port ) -> Port;
+i_port_fix( Port ) when is_list( Port ) -> list_to_integer( Port );
+i_port_fix( _ ) -> ?DEFAULT_PORT.	

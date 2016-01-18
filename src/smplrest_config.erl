@@ -4,11 +4,13 @@
 -define( CONF_FILE, "smplrest.config" ).
 -define( CONF_PATH, "priv" ).
 
--record( state, { filename, path, app_home, config, refresh = 0 } ).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 -export([start_link/0, start_link/1, stop/0, stop/1] ).
--export( [get_value/1, set_value/2] ).
+-export( [get_value/1, get_value/2, get_value/3, set_value/3, load_file/1, reload_file/0, apply_config/1] ).
+
+
+
 
 start_link( ) ->
 	start_link( [] ).
@@ -24,12 +26,31 @@ stop( Reason ) ->
 	gen_server:call( ?MODULE, {stop, Reason} ).
 
 
-get_value( Key ) -> 
-	gen_server:call( ?MODULE, {get, Key } ).
+get_value( Class ) ->
+	gen_server:call( ?MODULE, {get, Class, all } ).
 
-set_value( Key, Val ) -> 
-	gen_server:call( ?MODULE, {set, Key, Val } ).
+get_value( Class, Key ) -> 
+	gen_server:call( ?MODULE, {get, Class, Key } ).
 
+get_value( Class, Key, Default ) ->
+	case gen_server:call( ?MODULE, {get, Class, Key } ) of
+		{error, _ } -> {ok, Default};
+		Else -> Else
+	end.
+
+set_value( Class, Key, Val ) -> 
+	gen_server:call( ?MODULE, {set, Class, Key, Val } ).
+
+load_file( Filename ) ->
+	gen_server:call( ?MODULE, {load, config, Filename} ).
+
+reload_file( ) ->
+	gen_server:call( ?MODULE, {load, config} ).
+
+apply_config( Config ) ->
+	gen_server:call( ?MODULE, {set, apply, Config } ).
+
+-record( state, { filename, path, app_home, config, refresh = 0 } ).
 
 %% init/1
 %% ====================================================================
@@ -43,22 +64,14 @@ set_value( Key, Val ) ->
 	State :: term(),
 	Timeout :: non_neg_integer() | infinity.
 %% ====================================================================
+init( [] ) ->
+	{ok, #state{ filename = ?CONF_FILE, path = ?CONF_PATH, app_home = file:get_cwd() } };
+
 init([Config]) ->
-	
-	case proplists:get_value( global, Config, undefined ) of
-		undefined ->  {stop, {error, undefined, global }};
-		GlobalConfig ->
-			Filename = proplists:get_value( filename, GlobalConfig, ?CONF_FILE ),
-			Filepath = proplists:get_value( path, GlobalConfig, ?CONF_PATH ),
-			Referesh = proplists:get_value( refresh, GlobalConfig, 0 ),
-
-			case proplists:get_value( app_home, GlobalConfig, undefined ) of
-				undefined -> {stop, {error, undefined, home }};
-				Home -> {ok, #state{ filename = Filename, path = Filepath, refresh = Referesh, app_home = Home, config = Config }}
-			end
-		end.
-
-
+	case i_apply_config( Config ) of
+		{error, Reason} -> {stop, Reason}; 
+		NewState -> {ok, NewState }
+	end.
 
 
 %% handle_call/3
@@ -78,6 +91,52 @@ init([Config]) ->
 	Timeout :: non_neg_integer() | infinity,
 	Reason :: term().
 %% ====================================================================
+handle_call( {get, Class, all }, _From, #state{ config = Config } = State ) ->
+	case proplists:get_value( Class, Config, undefined ) of
+		undefined -> {reply, {error, missing_class}, State};
+		Val -> {reply, { ok, Val }, State }
+	end;
+
+handle_call( {get, Class, Key }, _From, #state{ config = Config } = State ) ->
+	case proplists:get_value( Class, Config, undefined ) of
+		undefined -> {reply, {error, missing_class}, State};
+		ClassVal -> 
+			case proplists:get_value( Key, ClassVal, undefined ) of
+				undefined -> {reply, {error, missing_key }, State};
+				Val -> {reply, { ok, Val }, State }
+			end
+	end;
+
+
+handle_call( {set, _Class, _Key, _Val}, _From, State ) ->
+	{reply, {ok, undefined}, State};	
+
+handle_call( {set, config, Config}, _From, State ) ->
+	
+	case i_apply_config( Config ) of
+		{ error, Reason } -> {reply, {error, Reason }, State};
+		NewState ->
+			{reply, {ok, config}, NewState }
+	end;
+
+handle_call( {load, config}, _From, #state{ filename = Filename, path = Path, app_home = Home } = State ) ->
+	FullFilename = Home+"/"+Path+"/"+Filename,
+
+	case i_load_file( FullFilename ) of
+		{error, Reason} -> 
+			error_logger:error_msg( "", [] ),
+			{reply, {error, Reason}, State };
+		NewState -> {reply, ok, NewState }
+	end;
+
+handle_call( {load, config, Filename}, _From, State ) ->
+	case i_load_file( Filename ) of
+		{error, Reason} -> 
+			error_logger:error_msg( "", [] ),
+			{reply, {error, Reason}, State };
+		NewState -> {reply, ok, NewState }
+	end;
+
 handle_call( {stop, Reason} , _From, State ) ->
 	{stop, Reason, State };
 
@@ -143,3 +202,29 @@ code_change( _OldVsn, State, _Extra) ->
 %% ====================================================================
 %% Internal functions
 %% ====================================================================
+
+
+i_load_file( Filename ) ->
+	case file:consult( Filename ) of
+		{error, Reason} -> {error, Reason};
+		Config -> i_apply_config( Config )
+	end.
+
+i_apply_config( Config ) ->
+
+	case proplists:get_value( global, Config, undefined ) of
+		undefined ->  {stop, {error, undefined, global }};
+		GlobalConfig ->
+			Filename = proplists:get_value( filename, GlobalConfig, ?CONF_FILE ),
+			Filepath = proplists:get_value( path, GlobalConfig, ?CONF_PATH ),
+			Referesh = proplists:get_value( refresh, GlobalConfig, 0 ),
+
+			case proplists:get_value( app_home, GlobalConfig, undefined ) of
+				undefined -> {error, { undefined, home }};
+				Home -> 
+					case file:set_cwd( Home ) of
+						ok -> #state{ filename = Filename, path = Filepath, refresh = Referesh, app_home = Home, config = Config };
+						{error, Reason} -> {error, Reason}
+					end
+			end
+		end.

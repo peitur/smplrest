@@ -2,9 +2,12 @@
     {description, "Simple REST application using erlang"},
     {vsn, "0.0.1"},
     {modules, [
+        smplrest,
         smplrest_config,
+        smplrest_sup,
         smplrest_app,
-        sr_cwbmgr
+        sr_cwbmgr,
+        sr_http_handler
     ]},
     {registered, []},
     {applications, [
